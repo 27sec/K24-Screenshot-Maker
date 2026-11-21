@@ -1,6 +1,4 @@
 import AppKit
-import AVFoundation
-import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -23,7 +21,7 @@ struct VideoItem: Identifiable, Equatable {
 
 enum PlaybackState: Equatable {
     case idle
-    case preparing(progress: Double, transcoding: Bool)
+    case loading
     case ready
     case failed(String)
 }
@@ -39,13 +37,13 @@ final class AppModel: ObservableObject {
     @Published var showPlaylist = true
 
     // Player
-    let player = AVPlayer()
+    let player = MPVPlayer()
     @Published var playback: PlaybackState = .idle
     @Published var isPlaying = false
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
-    @Published var volume: Float = 0.8 { didSet { player.volume = volume; defaults.set(volume, forKey: "volume") } }
-    @Published var muted = false { didSet { player.isMuted = muted } }
+    @Published var volume: Float = 0.8 { didSet { player.setVolume(volume); defaults.set(volume, forKey: "volume") } }
+    @Published var muted = false { didSet { player.setMuted(muted) } }
 
     // Thumbnail sheet panel
     @Published var showSheetPanel = false
@@ -70,12 +68,9 @@ final class AppModel: ObservableObject {
     }
 
     private let defaults = UserDefaults.standard
-    private var prepareTask: Task<Void, Never>?
     private var generateTask: Task<Void, Never>?
     private var metadataQueue: [UUID] = []
     private var metadataTask: Task<Void, Never>?
-    private var timeObserver: Any?
-    private var bag = Set<AnyCancellable>()
 
     private init() {
         let pictures = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
@@ -88,20 +83,24 @@ final class AppModel: ObservableObject {
         if defaults.object(forKey: "timestamps") != nil { showTimestamps = defaults.bool(forKey: "timestamps") }
         if defaults.object(forKey: "filename") != nil { includeFilename = defaults.bool(forKey: "filename") }
         if defaults.object(forKey: "volume") != nil { volume = defaults.float(forKey: "volume") }
-        player.volume = volume
+        player.setVolume(volume)
 
-        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
-                                                      queue: .main) { [weak self] time in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.currentTime = time.seconds.isFinite ? time.seconds : 0
-                if let d = self.player.currentItem?.duration.seconds, d.isFinite, d > 0 { self.duration = d }
-            }
+        player.onTimePos = { [weak self] t in
+            guard let self else { return }
+            self.currentTime = t.isFinite ? max(0, t) : 0
         }
-        player.publisher(for: \.timeControlStatus)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] status in self?.isPlaying = status != .paused }
-            .store(in: &bag)
+        player.onDuration = { [weak self] d in if d.isFinite, d > 0 { self?.duration = d } }
+        player.onPlayingChanged = { [weak self] playing in
+            if self?.isPlaying != playing { self?.isPlaying = playing }
+        }
+        player.onFileLoaded = { [weak self] in
+            guard let self, self.currentID != nil else { return }
+            self.playback = .ready
+        }
+        player.onFileFailed = { [weak self] message in
+            guard let self, self.currentID != nil, self.playback == .loading else { return }
+            self.playback = .failed(message)
+        }
     }
 
     // MARK: - Derived
@@ -172,8 +171,7 @@ final class AppModel: ObservableObject {
 
     func remove(_ id: UUID) {
         if currentID == id {
-            prepareTask?.cancel()
-            player.replaceCurrentItem(with: nil)
+            player.stop()
             currentID = nil
             playback = .idle
             currentTime = 0; duration = 0
@@ -232,68 +230,30 @@ final class AppModel: ObservableObject {
 
     func play(_ id: UUID) {
         guard let item = items.first(where: { $0.id == id }) else { return }
-        prepareTask?.cancel()
-        player.pause()
-        player.replaceCurrentItem(with: nil)
         currentID = id
         currentTime = 0
         duration = item.info?.duration ?? 0
-        playback = .preparing(progress: 0, transcoding: false)
-
-        prepareTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                var info = item.info
-                if info == nil {
-                    let probed = try await FF.probe(item.url)
-                    info = probed
-                    self.update(id) { $0.info = probed }
-                }
-                guard let info else { return }
-                self.duration = info.duration
-                let transcoding = FF.needsConversion(item.url) && FF.willTranscodeVideo(info)
-                self.playback = .preparing(progress: 0, transcoding: transcoding)
-                let playable = try await FF.preparePlayable(item.url, info: info) { p in
-                    Task { @MainActor in
-                        let model = AppModel.shared
-                        if model.currentID == id, case .preparing = model.playback {
-                            model.playback = .preparing(progress: p, transcoding: transcoding)
-                        }
-                    }
-                }
-                try Task.checkCancellation()
-                guard self.currentID == id else { return }
-                let playerItem = AVPlayerItem(url: playable)
-                self.player.replaceCurrentItem(with: playerItem)
-                self.playback = .ready
-                self.player.play()
-            } catch is CancellationError {
-            } catch {
-                if self.currentID == id { self.playback = .failed(error.localizedDescription) }
-            }
+        guard player.isAvailable else {
+            playback = .failed("libmpv was not found. Install it with:  brew install mpv")
+            return
         }
+        playback = .loading
+        player.load(item.url)
     }
 
     func togglePlay() {
-        guard player.currentItem != nil else {
+        guard player.hasFile else {
             if let id = currentID ?? items.first?.id { play(id) }
             return
         }
         if isPlaying { player.pause() } else {
-            if duration > 0, currentTime >= duration - 0.3 { seek(to: 0) }
             player.play()
         }
     }
 
     func seek(to seconds: Double, exact: Bool = true) {
-        let t = CMTime(seconds: max(0, seconds), preferredTimescale: 600)
         currentTime = max(0, seconds)
-        if exact {
-            player.seek(to: t, toleranceBefore: .zero, toleranceAfter: .zero)
-        } else {
-            player.seek(to: t, toleranceBefore: CMTime(seconds: 0.5, preferredTimescale: 600),
-                        toleranceAfter: CMTime(seconds: 0.5, preferredTimescale: 600))
-        }
+        player.seek(to: currentTime, exact: exact)
     }
 
     func skip(_ delta: Double) {

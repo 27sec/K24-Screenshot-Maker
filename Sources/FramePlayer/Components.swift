@@ -1,4 +1,3 @@
-import AVFoundation
 import SwiftUI
 
 enum Theme {
@@ -13,41 +12,6 @@ enum Theme {
     static let accent = Color(red: 0.118, green: 0.447, blue: 1.0)
     static let border = Color.white.opacity(0.13)
     static let secondaryText = Color.white.opacity(0.62)
-}
-
-/// AVPlayerLayer host without the stock controls.
-struct PlayerLayerView: NSViewRepresentable {
-    let player: AVPlayer
-
-    final class LayerView: NSView {
-        let playerLayer = AVPlayerLayer()
-        override init(frame: NSRect) {
-            super.init(frame: frame)
-            wantsLayer = true
-            layer = CALayer()
-            layer?.backgroundColor = NSColor.black.cgColor
-            playerLayer.videoGravity = .resizeAspect
-            layer?.addSublayer(playerLayer)
-        }
-        required init?(coder: NSCoder) { fatalError() }
-        override func layout() {
-            super.layout()
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            playerLayer.frame = bounds
-            CATransaction.commit()
-        }
-    }
-
-    func makeNSView(context: Context) -> LayerView {
-        let v = LayerView()
-        v.playerLayer.player = player
-        return v
-    }
-
-    func updateNSView(_ nsView: LayerView, context: Context) {
-        if nsView.playerLayer.player !== player { nsView.playerLayer.player = player }
-    }
 }
 
 struct CheckBox: View {

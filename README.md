@@ -4,7 +4,8 @@ macOS video player for TV recordings (`.ts`) with batch thumbnail (contact) shee
 
 ## Requirements
 - macOS 15+
-- ffmpeg: `brew install ffmpeg`
+- ffmpeg and mpv: `brew install ffmpeg mpv`
+  (libmpv is loaded at runtime from Homebrew for playback; ffmpeg does frame capture and sheets)
 
 ## Build
 ```bash
@@ -15,9 +16,8 @@ macOS video player for TV recordings (`.ts`) with batch thumbnail (contact) shee
 ## Usage
 - **Open** / drag & drop `.ts` files or a folder into the window.
 - Click a row to play. Space = play/pause, ←/→ = seek 10 s, double-click video = full screen.
-- `.ts` files are converted into a cached MP4 for playback (`~/Library/Caches/FramePlayer`).
-  H.264 → fast remux (seconds); MPEG-2 → hardware re-encode (first open only).
-  Clear it from the menu: Playback → Clear Playback Cache.
+- Playback uses libmpv, so `.ts` files (H.264, HEVC, MPEG-2, AC-3/MP2 audio) play immediately
+  with no conversion. Interlaced recordings are deinterlaced automatically.
 - **Capture** saves the current frame as PNG to the Save-to folder.
 - Tick files (or **Select all**) → **Create thumbnails (N)** → choose layout
   3×3 / 3×4 / 4×4 / 4×5 / 5×5,

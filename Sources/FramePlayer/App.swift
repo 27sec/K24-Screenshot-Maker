@@ -26,9 +26,6 @@ enum Headless {
                 let settings = SheetSettings(layout: layout, outputDirectory: URL(fileURLWithPath: outDir))
                 let out = try await ContactSheet.generate(for: url, info: info, settings: settings)
                 print("sheet: \(out.path)")
-                let start = Date()
-                let playable = try await FF.preparePlayable(url, info: info) { _ in }
-                print("playable: \(playable.path) (\(String(format: "%.1f", Date().timeIntervalSince(start)))s)")
             } catch {
                 print("error: \(error.localizedDescription)")
             }
@@ -57,10 +54,6 @@ struct FramePlayerApp: App {
                 Button("Capture Frame") { model.captureFrame() }.keyboardShortcut("s", modifiers: [.command, .shift])
                 Button("Create Thumbnail Sheets…") { model.showSheetPanel = true }
                     .keyboardShortcut("t", modifiers: [.command, .shift])
-                Divider()
-                Button("Clear Playback Cache") {
-                    FF.clearCache(); model.showToast("Playback cache cleared")
-                }
             }
         }
     }
@@ -112,6 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if FF.ffmpegPath == nil {
             Task { @MainActor in AppModel.shared.showToast("ffmpeg not found — install with: brew install ffmpeg") }
         }
+        DispatchQueue.global(qos: .utility).async { FF.removeLegacyPlaybackCache() }
         // Space = play/pause, ←/→ = seek 10 s (unless typing in a text field).
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             if NSApp.keyWindow?.firstResponder is NSText { return event }
@@ -147,4 +141,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated { AppModel.shared.player.shutdown() }
+    }
 }

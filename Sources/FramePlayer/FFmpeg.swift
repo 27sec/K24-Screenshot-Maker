@@ -1,7 +1,6 @@
 import Foundation
 import CoreGraphics
 import ImageIO
-import CryptoKit
 
 enum FFError: LocalizedError {
     case notInstalled
@@ -217,93 +216,10 @@ enum FF {
         throw FFError.noFrame
     }
 
-    // MARK: - Playback preparation
-
-    static var cacheDirectory: URL {
+    /// Removes the MP4 cache the AVPlayer-based player used to create (mpv plays files directly now).
+    static func removeLegacyPlaybackCache() {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        let dir = base.appendingPathComponent("FramePlayer/Playback", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
-    static func needsConversion(_ url: URL) -> Bool {
-        !["mp4", "m4v", "mov"].contains(url.pathExtension.lowercased())
-    }
-
-    /// Whether preparing this file only rewraps streams (fast) or has to re-encode video (slower).
-    static func willTranscodeVideo(_ info: ProbeInfo) -> Bool {
-        !["h264", "hevc"].contains(info.videoCodec ?? "")
-    }
-
-    /// AVPlayer cannot open MPEG-TS recordings directly, so they are rewrapped (or re-encoded
-    /// when the video is MPEG-2) into a cached MP4. Returns a URL AVPlayer can play.
-    static func preparePlayable(_ url: URL, info: ProbeInfo,
-                                progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
-        guard needsConversion(url) else { return url }
-        guard let ffmpeg = ffmpegPath else { throw FFError.notInstalled }
-
-        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
-        let mtime = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-        let keySource = "\(url.path)|\(info.fileSize)|\(mtime)"
-        let key = SHA256.hash(data: Data(keySource.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
-        let output = cacheDirectory.appendingPathComponent("\(key).mp4")
-        if FileManager.default.fileExists(atPath: output.path) { return output }
-        let temp = cacheDirectory.appendingPathComponent("\(key).part.mp4")
-
-        let duration = info.duration
-        let report: @Sendable (String) -> Void = { line in
-            guard duration > 0, line.hasPrefix("out_time_us=") || line.hasPrefix("out_time_ms=") else { return }
-            if let us = Double(line.split(separator: "=").last ?? "") {
-                progress(min(1, max(0, us / 1_000_000 / duration)))
-            }
-        }
-
-        func args(videoMode: String) -> [String] {
-            var a = ["-y", "-hide_banner", "-nostats", "-progress", "pipe:1",
-                     "-fflags", "+genpts+discardcorrupt", "-i", url.path,
-                     "-map", "0:v:0", "-map", "0:a:0?", "-dn", "-sn"]
-            switch videoMode {
-            case "copy":
-                a += ["-c:v", "copy"]
-                if info.videoCodec == "hevc" { a += ["-tag:v", "hvc1"] }
-            case "vt":
-                a += ["-vf", "yadif=deint=interlaced", "-c:v", "h264_videotoolbox",
-                      "-b:v", "10M", "-pix_fmt", "yuv420p"]
-            default:
-                a += ["-vf", "yadif=deint=interlaced", "-c:v", "libx264", "-preset", "veryfast",
-                      "-crf", "20", "-pix_fmt", "yuv420p"]
-            }
-            if info.audioCodec == "aac" {
-                a += ["-c:a", "copy"]
-            } else {
-                a += ["-c:a", "aac", "-b:a", "192k", "-ac", "2"]
-            }
-            a += ["-avoid_negative_ts", "make_zero", "-f", "mp4", temp.path]
-            return a
-        }
-
-        let modes = willTranscodeVideo(info) ? ["vt", "x264"] : ["copy", "vt", "x264"]
-        var lastError: Error = FFError.failed("Unknown error")
-        for mode in modes {
-            try Task.checkCancellation()
-            do {
-                try await run(ffmpeg, args(videoMode: mode), onLine: report)
-                try? FileManager.default.removeItem(at: output)
-                try FileManager.default.moveItem(at: temp, to: output)
-                return output
-            } catch is CancellationError {
-                try? FileManager.default.removeItem(at: temp)
-                throw CancellationError()
-            } catch {
-                lastError = error
-                try? FileManager.default.removeItem(at: temp)
-            }
-        }
-        throw lastError
-    }
-
-    static func clearCache() {
-        try? FileManager.default.removeItem(at: cacheDirectory)
+        try? FileManager.default.removeItem(at: base.appendingPathComponent("FramePlayer/Playback", isDirectory: true))
     }
 }
 

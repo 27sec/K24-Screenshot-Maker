@@ -72,7 +72,7 @@ struct VideoPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack(alignment: .topLeading) {
-                PlayerLayerView(player: m.player)
+                MPVVideoView()
                     .onTapGesture(count: 2) { m.toggleFullScreen() }
                     .simultaneousGesture(TapGesture().onEnded { if !m.showSheetPanel { m.togglePlay() } })
 
@@ -132,23 +132,6 @@ struct StatusOverlay: View {
                 }
             } else {
                 switch m.playback {
-                case .preparing(let progress, let transcoding):
-                    VStack(spacing: 12) {
-                        if progress > 0 {
-                            ProgressView(value: progress).frame(width: 260)
-                        } else {
-                            ProgressView().controlSize(.large)
-                        }
-                        Text(transcoding ? "Converting MPEG-2 for playback… \(Int(progress * 100))%"
-                                         : "Preparing video… \(Int(progress * 100))%")
-                            .font(.system(size: 15, weight: .medium))
-                        if transcoding {
-                            Text("First open only — the result is cached")
-                                .font(.system(size: 12)).foregroundStyle(Theme.secondaryText)
-                        }
-                    }
-                    .padding(24)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(.black.opacity(0.55)))
                 case .failed(let message):
                     VStack(spacing: 10) {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -201,7 +184,7 @@ struct ControlsBar: View {
                        onChange: { m.seek(to: $0, exact: false) },
                        onEnd: { m.seek(to: $0) })
                 .padding(.horizontal, 14)
-                .disabled(m.player.currentItem == nil)
+                .disabled(m.playback != .ready)
 
             HStack(spacing: 18) {
                 IconButton(icon: "backward.end.fill", size: 20, help: "Previous") { m.playAdjacent(-1) }
