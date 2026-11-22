@@ -2,6 +2,8 @@
 
 macOS video player for TV recordings (`.ts`) with batch thumbnail (contact) sheets.
 
+![K24 Screenshot Maker playing a video with the playlist open](docs/screenshot.png)
+
 ## Requirements
 - macOS 15+
 - ffmpeg and mpv: `brew install ffmpeg mpv`
