@@ -28,7 +28,12 @@ macOS video player for TV recordings (`.ts`) with batch thumbnail (contact) shee
 
 ## Usage
 - **Open** / drag & drop `.ts` files or a folder into the window.
+- Drop files on the **video** to play them right away; drop them on the **playlist** to queue them.
 - Click a row to play. Space = play/pause, ←/→ = seek 10 s, double-click video = full screen.
+- In full screen the bars float translucent over the video and hide after a few seconds;
+  move the mouse to bring them back.
+- **View → Show Playlist at Launch** (also in the playlist's ⋯ menu) sets whether the playlist
+  is open when the app starts. ⌥⌘L toggles it.
 - Playback uses libmpv, so `.ts` files (H.264, HEVC, MPEG-2, AC-3/MP2 audio) play immediately
   with no conversion. Interlaced recordings are deinterlaced automatically.
 - **Capture** saves the current frame as PNG to the Save-to folder.

@@ -35,6 +35,20 @@ final class AppModel: ObservableObject {
     @Published var currentID: UUID?
     @Published var search = ""
     @Published var showPlaylist = true
+    @Published var showPlaylistOnLaunch = true { didSet { defaults.set(showPlaylistOnLaunch, forKey: "playlistOnLaunch") } }
+
+    // Full screen: bars overlay the video and auto-hide after a few seconds without mouse movement.
+    @Published var isFullScreen = false {
+        didSet {
+            guard isFullScreen != oldValue else { return }
+            chromeVisible = true
+            chromeHovered = false
+            if isFullScreen { scheduleChromeHide() } else { chromeHideTask?.cancel() }
+        }
+    }
+    @Published var chromeVisible = true
+    private var chromeHovered = false
+    private var chromeHideTask: Task<Void, Never>?
 
     // Player
     let player = MPVPlayer()
@@ -83,6 +97,8 @@ final class AppModel: ObservableObject {
         if defaults.object(forKey: "timestamps") != nil { showTimestamps = defaults.bool(forKey: "timestamps") }
         if defaults.object(forKey: "filename") != nil { includeFilename = defaults.bool(forKey: "filename") }
         if defaults.object(forKey: "volume") != nil { volume = defaults.float(forKey: "volume") }
+        if defaults.object(forKey: "playlistOnLaunch") != nil { showPlaylistOnLaunch = defaults.bool(forKey: "playlistOnLaunch") }
+        showPlaylist = showPlaylistOnLaunch
         player.setVolume(volume)
 
         player.onTimePos = { [weak self] t in
@@ -130,16 +146,24 @@ final class AppModel: ObservableObject {
         if panel.runModal() == .OK { add(urls: panel.urls) }
     }
 
-    func handleDrop(_ providers: [NSItemProvider]) {
-        for provider in providers {
-            _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                guard let url else { return }
-                Task { @MainActor in AppModel.shared.add(urls: [url]) }
+    /// Dropped on the player → play right away; dropped on the playlist → queue at the end.
+    func handleDrop(_ providers: [NSItemProvider], playNow: Bool) {
+        Task {
+            var urls: [URL] = []
+            for provider in providers {
+                if let url = await Self.loadURL(provider) { urls.append(url) }
             }
+            add(urls: urls, playNow: playNow)
         }
     }
 
-    func add(urls: [URL]) {
+    private nonisolated static func loadURL(_ provider: NSItemProvider) async -> URL? {
+        await withCheckedContinuation { cont in
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in cont.resume(returning: url) }
+        }
+    }
+
+    func add(urls: [URL], playNow: Bool = false) {
         var files: [URL] = []
         for url in urls {
             var isDir: ObjCBool = false
@@ -154,19 +178,23 @@ final class AppModel: ObservableObject {
                 files.append(url)
             }
         }
+        files.sort { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
         let existing = Set(items.map { $0.url.standardizedFileURL.path })
         let newItems = files
             .filter { !existing.contains($0.standardizedFileURL.path) }
-            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
             .map { VideoItem(url: $0) }
-        guard !newItems.isEmpty else {
-            if files.isEmpty { showToast("No supported video files found") }
-            return
+        if files.isEmpty { showToast("No supported video files found"); return }
+        if !newItems.isEmpty {
+            items.append(contentsOf: newItems)
+            metadataQueue.append(contentsOf: newItems.map(\.id))
+            processMetadataQueue()
         }
-        items.append(contentsOf: newItems)
-        metadataQueue.append(contentsOf: newItems.map(\.id))
-        processMetadataQueue()
-        if currentID == nil, let first = newItems.first { play(first.id) }
+        if playNow, let path = files.first?.standardizedFileURL.path,
+           let target = items.first(where: { $0.url.standardizedFileURL.path == path }) {
+            play(target.id)
+        } else if currentID == nil, let first = newItems.first {
+            play(first.id)
+        }
     }
 
     func remove(_ id: UUID) {
@@ -274,6 +302,31 @@ final class AppModel: ObservableObject {
 
     func toggleFullScreen() {
         (NSApp.keyWindow ?? NSApp.windows.first)?.toggleFullScreen(nil)
+    }
+
+    /// Mouse moved: show the full-screen bars and restart the hide timer.
+    func noteMouseActivity() {
+        guard isFullScreen else { return }
+        if !chromeVisible { withAnimation(.easeOut(duration: 0.2)) { chromeVisible = true } }
+        scheduleChromeHide()
+    }
+
+    /// Keep the bars up while the pointer is over them.
+    func setChromeHovered(_ hovered: Bool) {
+        chromeHovered = hovered
+        if !hovered { scheduleChromeHide() }
+    }
+
+    private func scheduleChromeHide() {
+        chromeHideTask?.cancel()
+        guard isFullScreen else { return }
+        chromeHideTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard let self, !Task.isCancelled, self.isFullScreen,
+                  !self.chromeHovered, !self.showSheetPanel else { return }
+            withAnimation(.easeIn(duration: 0.35)) { self.chromeVisible = false }
+            NSCursor.setHiddenUntilMouseMoves(true)
+        }
     }
 
     // MARK: - Capture current frame

@@ -46,6 +46,14 @@ struct FramePlayerApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("Open…") { model.openFiles() }.keyboardShortcut("o")
             }
+            CommandGroup(before: .toolbar) {
+                Button(model.showPlaylist ? "Hide Playlist" : "Show Playlist") {
+                    withAnimation(.easeInOut(duration: 0.22)) { model.showPlaylist.toggle() }
+                }
+                .keyboardShortcut("l", modifiers: [.command, .option])
+                Toggle("Show Playlist at Launch", isOn: $model.showPlaylistOnLaunch)
+                Divider()
+            }
             CommandMenu("Playback") {
                 Button("Play / Pause") { model.togglePlay() }
                 Button("Forward 10 s") { model.skip(10) }.keyboardShortcut(.rightArrow, modifiers: .command)
@@ -61,6 +69,8 @@ struct FramePlayerApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var keyMonitor: Any?
+    private var mouseMonitor: Any?
+    private var fullScreenObservers: [NSObjectProtocol] = []
     private var mainWindow: NSWindow?
 
     @MainActor func showMainWindow() {
@@ -80,6 +90,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         w.contentMinSize = NSSize(width: 1000, height: 640)
         w.center()
         w.setFrameAutosaveName("FramePlayerMain")
+        w.acceptsMouseMovedEvents = true
+        let center = NotificationCenter.default
+        for (name, value) in [(NSWindow.willEnterFullScreenNotification, true),
+                              (NSWindow.didExitFullScreenNotification, false)] {
+            fullScreenObservers.append(center.addObserver(forName: name, object: w, queue: .main) { _ in
+                MainActor.assumeIsolated { AppModel.shared.isFullScreen = value }
+            })
+        }
         mainWindow = w
         w.makeKeyAndOrderFront(nil)
     }
@@ -106,6 +124,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in AppModel.shared.showToast("ffmpeg not found — install with: brew install ffmpeg") }
         }
         DispatchQueue.global(qos: .utility).async { FF.removeLegacyPlaybackCache() }
+        // Mouse movement brings back the auto-hidden full-screen bars.
+        mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .scrollWheel]) { event in
+            MainActor.assumeIsolated { AppModel.shared.noteMouseActivity() }
+            return event
+        }
         // Space = play/pause, ←/→ = seek 10 s (unless typing in a text field).
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             if NSApp.keyWindow?.firstResponder is NSText { return event }

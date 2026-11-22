@@ -12,6 +12,8 @@ enum Theme {
     static let accent = Color(red: 0.118, green: 0.447, blue: 1.0)
     static let border = Color.white.opacity(0.13)
     static let secondaryText = Color.white.opacity(0.62)
+    /// Tint over the blur for full-screen bars.
+    static let overlay = Color.black.opacity(0.45)
 }
 
 struct CheckBox: View {

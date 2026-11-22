@@ -3,40 +3,83 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject var m: AppModel
-    @StateObject private var dropBox = Box(false)
+
+    var body: some View {
+        // One tree for both modes so the video view is never recreated when entering full screen.
+        ZStack {
+            VStack(spacing: 0) {
+                if !m.isFullScreen { TopBar() }
+                HStack(spacing: 0) {
+                    VideoPanel()
+                        .padding(.leading, m.isFullScreen ? 0 : 8)
+                        .padding(.bottom, m.isFullScreen ? 0 : 8)
+                        .padding(.trailing, m.isFullScreen || m.showPlaylist ? 0 : 8)
+                    if m.showPlaylist && !m.isFullScreen {
+                        PlaylistSidebar()
+                            .frame(width: 430)
+                            .transition(.move(edge: .trailing))
+                    }
+                }
+            }
+            if m.isFullScreen { FullScreenChrome() }
+        }
+        .onContinuousHover { phase in
+            if case .active = phase { m.noteMouseActivity() }
+        }
+        .background(m.isFullScreen ? Color.black : Theme.window)
+        .ignoresSafeArea()
+        .preferredColorScheme(.dark)
+        .tint(Theme.accent)
+    }
+}
+
+/// Translucent bars laid over the video in full screen; they fade out when the mouse is idle.
+struct FullScreenChrome: View {
+    @EnvironmentObject var m: AppModel
 
     var body: some View {
         VStack(spacing: 0) {
             TopBar()
+                .onHover { m.setChromeHovered($0) }
             HStack(spacing: 0) {
-                VideoPanel()
-                    .padding(.leading, 8)
-                    .padding(.bottom, 8)
-                    .padding(.trailing, m.showPlaylist ? 0 : 8)
+                Spacer(minLength: 0)
                 if m.showPlaylist {
                     PlaylistSidebar()
                         .frame(width: 430)
+                        .onHover { m.setChromeHovered($0) }
                         .transition(.move(edge: .trailing))
                 }
             }
+            // Fill the height even without the playlist so the bars stay pinned to the top and bottom edges.
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ControlsBar()
+                .background(Theme.overlay)
+                .background(.ultraThinMaterial)
+                .overlay(alignment: .top) { Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1) }
+                .onHover { m.setChromeHovered($0) }
         }
-        .background(Theme.window)
-        .ignoresSafeArea()
-        .preferredColorScheme(.dark)
-        .tint(Theme.accent)
-        .onDrop(of: [.fileURL], isTargeted: $dropBox.value) { providers in
-            m.handleDrop(providers)
-            return true
+        .opacity(m.chromeVisible ? 1 : 0)
+        .allowsHitTesting(m.chromeVisible)
+    }
+}
+
+/// Dashed highlight shown while files are dragged over a drop zone.
+struct DropHighlight: View {
+    let label: String
+    let icon: String
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 3, dash: [10, 6]))
+                .background(RoundedRectangle(cornerRadius: 10).fill(Theme.accent.opacity(0.10)))
+            Label(label, systemImage: icon)
+                .font(.system(size: 17, weight: .semibold))
+                .padding(.horizontal, 16).padding(.vertical, 9)
+                .background(Capsule().fill(Theme.accent))
         }
-        .overlay {
-            if dropBox.value {
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 3, dash: [10, 6]))
-                    .background(Theme.accent.opacity(0.08))
-                    .padding(6)
-                    .allowsHitTesting(false)
-            }
-        }
+        .padding(6)
+        .allowsHitTesting(false)
     }
 }
 
@@ -47,9 +90,12 @@ struct TopBar: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Text("K24 Screenshot Maker")
+            // In full screen the top bar doubles as the title of the playing file.
+            Text(m.isFullScreen ? (m.current?.name ?? "K24 Screenshot Maker") : "K24 Screenshot Maker")
                 .font(.system(size: 21, weight: .semibold))
-                .padding(.leading, 96)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.leading, m.isFullScreen ? 22 : 96)
             Spacer()
             TopBarButton(title: "Open", icon: "folder") { m.openFiles() }
             TopBarButton(title: "Playlist", icon: "list.bullet", active: m.showPlaylist) {
@@ -59,7 +105,13 @@ struct TopBar: View {
         }
         .padding(.trailing, 16)
         .frame(height: 56)
-        .background(Theme.titleBar.gesture(WindowDragGesture()))
+        .background {
+            if m.isFullScreen {
+                Theme.overlay.background(.ultraThinMaterial)
+            } else {
+                Theme.titleBar.gesture(WindowDragGesture())
+            }
+        }
         .overlay(alignment: .bottom) { Rectangle().fill(Color.black.opacity(0.35)).frame(height: 1) }
     }
 }
@@ -68,6 +120,7 @@ struct TopBar: View {
 
 struct VideoPanel: View {
     @EnvironmentObject var m: AppModel
+    @StateObject private var dropBox = Box(false)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -76,7 +129,7 @@ struct VideoPanel: View {
                     .onTapGesture(count: 2) { m.toggleFullScreen() }
                     .simultaneousGesture(TapGesture().onEnded { if !m.showSheetPanel { m.togglePlay() } })
 
-                if let item = m.current {
+                if let item = m.current, !m.isFullScreen {
                     Text(item.name)
                         .font(.system(size: 21, weight: .medium))
                         .shadow(color: .black.opacity(0.7), radius: 4)
@@ -103,15 +156,20 @@ struct VideoPanel: View {
                 }
             }
             .background(Color.black)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            .padding(6)
+            .clipShape(RoundedRectangle(cornerRadius: m.isFullScreen ? 0 : 4))
+            .padding(m.isFullScreen ? 0 : 6)
             .animation(.easeOut(duration: 0.2), value: m.showSheetPanel)
 
-            ControlsBar()
+            if !m.isFullScreen { ControlsBar() }
         }
-        .background(Theme.panel)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.white.opacity(0.06)))
+        .background(m.isFullScreen ? Color.black : Theme.panel)
+        .clipShape(RoundedRectangle(cornerRadius: m.isFullScreen ? 0 : 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.white.opacity(m.isFullScreen ? 0 : 0.06)))
+        .onDrop(of: [.fileURL], isTargeted: $dropBox.value) { providers in
+            m.handleDrop(providers, playNow: true)
+            return true
+        }
+        .overlay { if dropBox.value { DropHighlight(label: "Play now", icon: "play.fill") } }
     }
 }
 
@@ -219,6 +277,7 @@ struct ControlsBar: View {
 
 struct PlaylistSidebar: View {
     @EnvironmentObject var m: AppModel
+    @StateObject private var dropBox = Box(false)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -230,17 +289,18 @@ struct PlaylistSidebar: View {
                     .padding(.horizontal, 10).padding(.vertical, 4)
                     .background(Capsule().fill(Color.white.opacity(0.09)))
                 Spacer()
-                if !m.items.isEmpty {
-                    Menu {
-                        Button("Add Videos…") { m.openFiles() }
-                        Button("Remove All", role: .destructive) { m.removeAll() }
-                    } label: {
-                        Image(systemName: "ellipsis.circle").font(.system(size: 17))
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
+                Menu {
+                    Button("Add Videos…") { m.openFiles() }
+                    Button("Remove All", role: .destructive) { m.removeAll() }
+                        .disabled(m.items.isEmpty)
+                    Divider()
+                    Toggle("Show Playlist at Launch", isOn: $m.showPlaylistOnLaunch)
+                } label: {
+                    Image(systemName: "ellipsis.circle").font(.system(size: 17))
                 }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
             }
 
             HStack(spacing: 8) {
@@ -320,7 +380,14 @@ struct PlaylistSidebar: View {
         .padding(.horizontal, 14)
         .padding(.top, 16)
         .padding(.bottom, 18)
-        .background(Theme.sidebar)
+        .background {
+            if m.isFullScreen { Theme.overlay.background(.ultraThinMaterial) } else { Theme.sidebar }
+        }
+        .onDrop(of: [.fileURL], isTargeted: $dropBox.value) { providers in
+            m.handleDrop(providers, playNow: false)
+            return true
+        }
+        .overlay { if dropBox.value { DropHighlight(label: "Add to playlist", icon: "text.badge.plus") } }
     }
 }
 
