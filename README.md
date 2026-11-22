@@ -24,3 +24,6 @@ macOS video player for TV recordings (`.ts`) with batch thumbnail (contact) shee
   capture mode, JPEG/PNG, width → **Generate**. Output: `<name>_sheet.jpg`.
 
 Headless: `FramePlayer --sheet <video> <outdir> [3x4]`
+
+## License
+MIT, see [LICENSE](LICENSE). The bundled mpv headers in `Sources/CMpv/include` are ISC licensed.
