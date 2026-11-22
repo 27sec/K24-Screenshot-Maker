@@ -7,7 +7,18 @@ macOS video player for TV recordings (`.ts`) with batch thumbnail (contact) shee
 - ffmpeg and mpv: `brew install ffmpeg mpv`
   (libmpv is loaded at runtime from Homebrew for playback; ffmpeg does frame capture and sheets)
 
-## Build
+## Download
+1. Install the requirements above: `brew install ffmpeg mpv`
+2. Download the latest `K24-Screenshot-Maker-*-arm64.zip` from
+   [Releases](https://github.com/27sec/K24-Screenshot-Maker/releases/latest) (Apple Silicon only).
+3. Unzip it and move **K24 Screenshot Maker.app** to `/Applications`.
+4. The app is ad-hoc signed, not notarized, so macOS blocks the first launch.
+   Right-click the app → **Open**, or run:
+   ```bash
+   xattr -dr com.apple.quarantine "/Applications/K24 Screenshot Maker.app"
+   ```
+
+## Build from source
 ```bash
 ./build_app.sh
 ./build_app.sh --install   # builds and moves the app to /Applications
